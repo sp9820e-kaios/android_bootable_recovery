@@ -121,7 +121,16 @@ void* start_sdcard_fuse(const char* path) {
     // The installation process expects to find the sdcard unmounted.
     // Unmount it with MNT_DETACH so that our open file continues to
     // work but new references see it as unmounted.
+    /*SPRD:add for storage path as same as android @}
+    @orig
     umount2("/sdcard", MNT_DETACH);
+    */
+#ifdef ENABLE_INTERNAL_STORAGE
+    umount2("/storage/sdcard1", MNT_DETACH);
+#else
+    umount2("/storage/sdcard0", MNT_DETACH);
+#endif
+    /*@}*/
 
     return t;
 }

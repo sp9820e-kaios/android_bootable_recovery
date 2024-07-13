@@ -30,6 +30,18 @@
 #include "applypatch.h"
 #include "mtdutils/mtdutils.h"
 #include "edify/expr.h"
+// SPRD: add for support ubi
+#include "ubiutils/ubiutils.h"
+// SPRD: add for secure boot
+#include "sprd_sb_verifier/sprd_sb_verifier.h"
+#include "sprd_sb_verifier/sprd_sb_verifier_fsmgr.h"
+
+/* SPRD: add for secure boot @{ */
+int isApplypatch;
+char last_fstype[32];
+char last_dev[128];
+char last_sec[32];
+/* @} */
 
 static int LoadPartitionContents(const char* filename, FileContents* file);
 static ssize_t FileSink(const unsigned char* data, ssize_t len, void* token);
@@ -45,6 +57,8 @@ static int GenerateTarget(FileContents* source_file,
 
 static int mtd_partitions_scanned = 0;
 
+// SPRD: fix cache to small, use sdcard
+const char *cache_temp_source = ORIG_CACHE_TEMP_SOURCE;
 // Read a file into memory; store the file contents and associated
 // metadata in *file.
 //
@@ -52,10 +66,18 @@ static int mtd_partitions_scanned = 0;
 int LoadFileContents(const char* filename, FileContents* file) {
     file->data = NULL;
 
-    // A special 'filename' beginning with "MTD:" or "EMMC:" means to
+    /* SPRD: add for secure boot @{ */
+    if (strncmp(filename, "SEC_", 4) == 0) {
+        filename += 8; // SEC_VLR: or SEC_BSC:
+    }
+    /* @} */
+
+    // A special 'filename' beginning with "MTD:" or "EMMC:" or "UBI:" means to
     // load the contents of a partition.
     if (strncmp(filename, "MTD:", 4) == 0 ||
-        strncmp(filename, "EMMC:", 5) == 0) {
+        strncmp(filename, "EMMC:", 5) == 0 ||
+        /* SPRD: add for support ubi */
+        strncmp(filename, "UBI:", 4) == 0) {
         return LoadPartitionContents(filename, file);
     }
 
@@ -119,7 +141,12 @@ static int compare_size_indices(const void* a, const void* b) {
 // "end-of-file" marker), so the caller must specify the possible
 // lengths and the hash of the data, and we'll do the load expecting
 // to find one of those hashes.
+/* SPRD: modify for support ubi @{
+ * @orig
 enum PartitionType { MTD, EMMC };
+*/
+enum PartitionType { MTD, UBI, EMMC };
+/* @} */
 
 static int LoadPartitionContents(const char* filename, FileContents* file) {
     char* copy = strdup(filename);
@@ -127,8 +154,18 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
 
     enum PartitionType type;
 
+    /* SPRD: add for secure boot @{ */
+    if (strncmp(magic, "SEC_", 4) == 0) {
+        magic = strtok(NULL, ":");
+    }
+    /* @} */
+
     if (strcmp(magic, "MTD") == 0) {
         type = MTD;
+/* SPRD: add for support ubi @{ */
+    } else if (strcmp(magic, "UBI") == 0) {
+        type = UBI;
+/* @} */
     } else if (strcmp(magic, "EMMC") == 0) {
         type = EMMC;
     } else {
@@ -137,7 +174,11 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
         return -1;
     }
     const char* partition = strtok(NULL, ":");
-
+   char * new_partition = strdup(partition);
+   if(strstr(partition, ".ap")){
+	   *(strstr(new_partition, ".ap")) = ':';
+	   partition = (const char*)new_partition;
+   }
     int i;
     int colons = 0;
     for (i = 0; filename[i] != '\0'; ++i) {
@@ -185,6 +226,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
             if (mtd == NULL) {
                 printf("mtd partition \"%s\" not found (loading %s)\n",
                        partition, filename);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
@@ -192,15 +235,36 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
             if (ctx == NULL) {
                 printf("failed to initialize read of mtd partition \"%s\"\n",
                        partition);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
             break;
+
+        /* SPRD: add for support ubi @{ */
+        case UBI:
+        {
+            char *devname = ubi_get_devname(partition);
+            dev = fopen(devname, "rb");
+            free(devname);
+            if (dev == NULL) {
+                printf("failed to open ubi volume \"%s\": %s\n",
+                       partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
+                return -1;
+            }
+            break;
+        }
+        /* @} */
 
         case EMMC:
             dev = fopen(partition, "rb");
             if (dev == NULL) {
                 printf("failed to open emmc partition \"%s\": %s\n",
                        partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
     }
@@ -226,6 +290,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
                     read = mtd_read_data(ctx, p, next);
                     break;
 
+                // SPRD: add for support ubi
+                case UBI:
                 case EMMC:
                     read = fread(p, 1, next, dev);
                     break;
@@ -233,6 +299,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
             if (next != read) {
                 printf("short read (%zu bytes of %zu) for partition \"%s\"\n",
                        read, next, partition);
+				if (new_partition)
+					free(new_partition);
                 free(file->data);
                 file->data = NULL;
                 return -1;
@@ -250,6 +318,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
         if (ParseSha1(sha1sum[index[i]], parsed_sha) != 0) {
             printf("failed to parse sha1 %s in %s\n",
                    sha1sum[index[i]], filename);
+			if (new_partition)
+				free(new_partition);
             free(file->data);
             file->data = NULL;
             return -1;
@@ -271,6 +341,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
             mtd_read_close(ctx);
             break;
 
+        // SPRD: add for support ubi
+        case UBI:
         case EMMC:
             fclose(dev);
             break;
@@ -282,6 +354,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
         // finding a match.
         printf("contents of partition \"%s\" didn't match %s\n",
                partition, filename);
+		if (new_partition)
+			free(new_partition);
         free(file->data);
         file->data = NULL;
         return -1;
@@ -292,6 +366,8 @@ static int LoadPartitionContents(const char* filename, FileContents* file) {
         file->sha1[i] = sha_final[i];
     }
 
+	if (new_partition)
+		free(new_partition);
     // Fake some stat() info.
     file->st.st_mode = 0644;
     file->st.st_uid = 0;
@@ -356,6 +432,10 @@ int WriteToPartition(unsigned char* data, size_t len,
     enum PartitionType type;
     if (strcmp(magic, "MTD") == 0) {
         type = MTD;
+/* SPRD: add for support ubi @{ */
+    } else if (strcmp(magic, "UBI") == 0) {
+        type = UBI;
+/* @} */
     } else if (strcmp(magic, "EMMC") == 0) {
         type = EMMC;
     } else {
@@ -369,6 +449,11 @@ int WriteToPartition(unsigned char* data, size_t len,
         return -1;
     }
 
+   char * new_partition = strdup(partition);
+   if(strstr(partition, ".ap")){
+	   *(strstr(new_partition, ".ap")) = ':';
+	   partition = (const char*)new_partition;
+   }
     switch (type) {
         case MTD:
             if (!mtd_partitions_scanned) {
@@ -380,6 +465,8 @@ int WriteToPartition(unsigned char* data, size_t len,
             if (mtd == NULL) {
                 printf("mtd partition \"%s\" not found for writing\n",
                        partition);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
@@ -387,6 +474,8 @@ int WriteToPartition(unsigned char* data, size_t len,
             if (ctx == NULL) {
                 printf("failed to init mtd partition \"%s\" for writing\n",
                        partition);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
@@ -395,36 +484,64 @@ int WriteToPartition(unsigned char* data, size_t len,
                 printf("only wrote %zu of %zu bytes to MTD %s\n",
                        written, len, partition);
                 mtd_write_close(ctx);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
             if (mtd_erase_blocks(ctx, -1) < 0) {
                 printf("error finishing mtd write of %s\n", partition);
                 mtd_write_close(ctx);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
             if (mtd_write_close(ctx)) {
                 printf("error closing mtd write of %s\n", partition);
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
             break;
 
+        // SPRD: add for support ubi
+        case UBI:
         case EMMC:
         {
             size_t start = 0;
             int success = 0;
+
+            /* SPRD: modify for support ubi @{
+             * @orig
             int fd = open(partition, O_RDWR | O_SYNC);
+            */
+            int fd = -1;
+            if (type == EMMC) {
+                fd = open(partition, O_RDWR);
+            } else if (type == UBI) {
+                fd = ubi_open(partition, O_RDWR);
+            }
+            /* @} */
             if (fd < 0) {
                 printf("failed to open %s: %s\n", partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
+            /* SPRD: add for support ubi @{ */
+            if (type == UBI) {
+                ubi_fupdate(fd, len);
+            }
+            /* @} */
             int attempt;
 
             for (attempt = 0; attempt < 2; ++attempt) {
                 if (TEMP_FAILURE_RETRY(lseek(fd, start, SEEK_SET)) == -1) {
                     printf("failed seek on %s: %s\n",
                            partition, strerror(errno));
+					if (new_partition)
+						free(new_partition);
                     return -1;
                 }
                 while (start < len) {
@@ -434,6 +551,8 @@ int WriteToPartition(unsigned char* data, size_t len,
                     ssize_t written = TEMP_FAILURE_RETRY(write(fd, data+start, to_write));
                     if (written == -1) {
                         printf("failed write writing to %s: %s\n", partition, strerror(errno));
+						if (new_partition)
+							free(new_partition);
                         return -1;
                     }
                     start += written;
@@ -441,17 +560,23 @@ int WriteToPartition(unsigned char* data, size_t len,
                 if (fsync(fd) != 0) {
                    printf("failed to sync to %s (%s)\n",
                           partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
                    return -1;
                 }
                 if (close(fd) != 0) {
                    printf("failed to close %s (%s)\n",
                           partition, strerror(errno));
+				   if (new_partition)
+					   free(new_partition);
                    return -1;
                 }
                 fd = open(partition, O_RDONLY);
                 if (fd < 0) {
                    printf("failed to reopen %s for verify (%s)\n",
                           partition, strerror(errno));
+				   if (new_partition)
+					   free(new_partition);
                    return -1;
                 }
 
@@ -471,6 +596,8 @@ int WriteToPartition(unsigned char* data, size_t len,
                 if (TEMP_FAILURE_RETRY(lseek(fd, 0, SEEK_SET)) == -1) {
                     printf("failed to seek back to beginning of %s: %s\n",
                            partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
                     return -1;
                 }
                 unsigned char buffer[4096];
@@ -487,6 +614,8 @@ int WriteToPartition(unsigned char* data, size_t len,
                         if (read_count == -1) {
                             printf("verify read error %s at %zu: %s\n",
                                    partition, p, strerror(errno));
+							if (new_partition)
+								free(new_partition);
                             return -1;
                         }
                         if ((size_t)read_count < to_read) {
@@ -512,11 +641,15 @@ int WriteToPartition(unsigned char* data, size_t len,
 
             if (!success) {
                 printf("failed to verify after all attempts\n");
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
 
             if (close(fd) != 0) {
                 printf("error closing %s (%s)\n", partition, strerror(errno));
+				if (new_partition)
+					free(new_partition);
                 return -1;
             }
             sync();
@@ -524,6 +657,8 @@ int WriteToPartition(unsigned char* data, size_t len,
         }
     }
 
+	if (new_partition)
+		free(new_partition);
     free(copy);
     return 0;
 }
@@ -820,6 +955,24 @@ static int GenerateTarget(FileContents* source_file,
     char* outname;
     int made_copy = 0;
 
+    /* SPRD: add for secure boot @{ */
+    int verify_type = VARIFY_TYPE_NON;
+
+    if (strncmp(target_filename, "SEC_", 4) == 0) {
+        if (strncmp(target_filename, "SEC_VLR:", 8) == 0) {
+            verify_type = VARIFY_TYPE_VLR;
+        } else if (strncmp(target_filename, "SEC_BSC:", 8) == 0) {
+            verify_type = VARIFY_TYPE_BSC;
+        } else {
+            verify_type = VARIFY_TYPE_INV;
+        }
+        target_filename += 8; // SEC_VLR: or SEC_BSC:
+    }
+    if (strncmp(source_filename, "SEC_", 4) == 0) {
+        source_filename += 8; // SEC_VLR: or SEC_BSC:
+    }
+    /* @} */
+
     // assume that target_filename (eg "/system/app/Foo.apk") is located
     // on the same filesystem as its top-level directory ("/system").
     // We need something that exists for calling statfs().
@@ -838,7 +991,9 @@ static int GenerateTarget(FileContents* source_file,
         // file?
 
         if (strncmp(target_filename, "MTD:", 4) == 0 ||
-            strncmp(target_filename, "EMMC:", 5) == 0) {
+            strncmp(target_filename, "EMMC:", 5) == 0 ||
+            /* SPRD: add for support ubi */
+            strncmp(target_filename, "UBI:", 4) == 0) {
             // If the target is a partition, we're actually going to
             // write the output to /tmp and then copy it to the
             // partition.  statfs() always returns 0 blocks free for
@@ -880,7 +1035,9 @@ static int GenerateTarget(FileContents* source_file,
                 // location.
 
                 if (strncmp(source_filename, "MTD:", 4) == 0 ||
-                    strncmp(source_filename, "EMMC:", 5) == 0) {
+                    strncmp(source_filename, "EMMC:", 5) == 0 ||
+                    /* SPRD: add for support ubi */
+                    strncmp(source_filename, "UBI:", 4) == 0) {
                     // It's impossible to free space on the target filesystem by
                     // deleting the source if the source is a partition.  If
                     // we're ever in a state where we need to do this, fail.
@@ -924,8 +1081,11 @@ static int GenerateTarget(FileContents* source_file,
         void* token = NULL;
         output = -1;
         outname = NULL;
+
         if (strncmp(target_filename, "MTD:", 4) == 0 ||
-            strncmp(target_filename, "EMMC:", 5) == 0) {
+            strncmp(target_filename, "EMMC:", 5) == 0 ||
+            /* SPRD: add for support ubi */
+            strncmp(target_filename, "UBI:", 4) == 0) {
             // We store the decoded output in memory.
             msi.buffer = malloc(target_size);
             if (msi.buffer == NULL) {
@@ -1015,6 +1175,7 @@ static int GenerateTarget(FileContents* source_file,
         // Copy the temp file to the partition.
         if (WriteToPartition(msi.buffer, msi.pos, target_filename) != 0) {
             printf("write of patched data to %s failed\n", target_filename);
+            free(msi.buffer); // SPRD: fix a bug
             return 1;
         }
         free(msi.buffer);
@@ -1046,3 +1207,4 @@ static int GenerateTarget(FileContents* source_file,
     // Success!
     return 0;
 }
+

@@ -35,6 +35,11 @@
 #include "minui.h"
 #include "graphics.h"
 
+/* SPRD: add for transform BGRA to RGB565 @{ */
+#define RGBA32toRGB565(r,g,b) ((((r>>3)&0x1f)<<11)|(((g>>2)&0x3f)<<5)|(((b>>3)&0x1f)<<0))
+
+/* @} */
+
 struct GRFont {
     GRSurface* texture;
     int cwidth;
@@ -81,6 +86,33 @@ static void text_blend(unsigned char* src_p, int src_row_bytes,
         for (int i = 0; i < width; ++i) {
             unsigned char a = *sx++;
             if (gr_current_a < 255) a = ((int)a * gr_current_a) / 255;
+/* SPRD: added for transform BGRA to RGB565 @{ */
+#if defined(LCD_FORMAT_RGB565)
+            uint8_t r,g,b;
+            unsigned short color;
+            if(a == 255){
+                r = gr_current_r;
+                g = gr_current_g;
+                b = gr_current_b;
+                color = RGBA32toRGB565(r,g,b);
+                *px++ = (unsigned char)((color>>0) & 0x00ff);
+                *px++ = (unsigned char)((color>>8) & 0x00ff);
+            }else if(a >= 0){
+                uint8_t rgb565_r,rgb565_g,rgb565_b;
+                unsigned short org_color = *(unsigned short *)px;
+                rgb565_r = (unsigned char)((org_color >> 8) & 0x00f8) + 0x0004;
+                rgb565_g = (unsigned char)((org_color >> 3) & 0x00fc)+ 0x0002;
+                rgb565_b = (unsigned char)((org_color << 3) & 0x00f8)+ 0x0004;
+                r = (rgb565_r * (255-a) + gr_current_r * a) / 255;
+                g = (rgb565_g * (255-a) + gr_current_g * a) / 255;
+                b = (rgb565_b * (255-a) + gr_current_b * a) / 255;
+                color = RGBA32toRGB565(r,g,b);
+                *px++ = (unsigned char)((color>>0) & 0x00ff);
+                *px++ = (unsigned char)((color>>8) & 0x00ff);
+            }else{
+                px += 2;
+            }
+#else
             if (a == 255) {
                 *px++ = gr_current_r;
                 *px++ = gr_current_g;
@@ -97,6 +129,8 @@ static void text_blend(unsigned char* src_p, int src_row_bytes,
             } else {
                 px += 4;
             }
+#endif
+/* @} */
         }
         src_p += src_row_bytes;
         dst_p += dst_row_bytes;
@@ -178,10 +212,19 @@ void gr_clear()
         unsigned char* px = gr_draw->data;
         for (int y = 0; y < gr_draw->height; ++y) {
             for (int x = 0; x < gr_draw->width; ++x) {
+/* SPRD: added for transform BGRA to RGB565 @{ */
+#if defined(LCD_FORMAT_RGB565)
+                unsigned short color;
+                color = RGBA32toRGB565(gr_current_r,gr_current_g,gr_current_b);
+                *px++ = (unsigned char)((color>>0) & 0x00ff);
+                *px++ = (unsigned char)((color>>8) & 0x00ff);
+#else
                 *px++ = gr_current_r;
                 *px++ = gr_current_g;
                 *px++ = gr_current_b;
                 px++;
+#endif
+/* @} */
             }
             px += gr_draw->row_bytes - (gr_draw->width * gr_draw->pixel_bytes);
         }
@@ -199,6 +242,43 @@ void gr_fill(int x1, int y1, int x2, int y2)
     if (outside(x1, y1) || outside(x2-1, y2-1)) return;
 
     unsigned char* p = gr_draw->data + y1 * gr_draw->row_bytes + x1 * gr_draw->pixel_bytes;
+/* SPRD: added for transform BGRA to RGB565 @{ */
+#if defined(LCD_FORMAT_RGB565)
+    unsigned short color;
+    if (gr_current_a == 255) {
+        int x, y;
+        for (y = y1; y < y2; ++y) {
+            unsigned char* px = p;
+            for (x = x1; x < x2; ++x) {
+                color = RGBA32toRGB565(gr_current_r,gr_current_g,gr_current_b);
+                *px++ = (unsigned char)((color>>0) & 0x00ff);
+                *px++ = (unsigned char)((color>>8) & 0x00ff);
+            }
+            p += gr_draw->row_bytes;
+        }
+    } else if (gr_current_a > 0) {
+        int x, y;
+        for (y = y1; y < y2; ++y) {
+            unsigned char* px = p;
+            for (x = x1; x < x2; ++x) {
+                uint8_t r,g,b;
+                uint8_t rgb565_r,rgb565_g,rgb565_b;
+                unsigned short org_color = *(unsigned short *)px;
+                rgb565_r = (unsigned char)((org_color >> 8) & 0x00f8) + 0x0004;
+                rgb565_g = (unsigned char)((org_color >> 3) & 0x00fc)+ 0x0002;
+                rgb565_b = (unsigned char)((org_color << 3) & 0x00f8)+ 0x0004;
+                r = (rgb565_r* (255-gr_current_a) + gr_current_r * gr_current_a) / 255;
+                g = (rgb565_g * (255-gr_current_a) + gr_current_g * gr_current_a) / 255;
+                b = (rgb565_b * (255-gr_current_a) + gr_current_b * gr_current_a) / 255;
+
+                color = RGBA32toRGB565(r,g,b);
+                *px++ = (unsigned char)((color>>0) & 0x00ff);
+                *px++ = (unsigned char)((color>>8) & 0x00ff);
+            }
+            p += gr_draw->row_bytes;
+        }
+    }
+#else
     if (gr_current_a == 255) {
         int x, y;
         for (y = y1; y < y2; ++y) {
@@ -227,16 +307,20 @@ void gr_fill(int x1, int y1, int x2, int y2)
             p += gr_draw->row_bytes;
         }
     }
+#endif
+/* @} */
 }
 
 void gr_blit(GRSurface* source, int sx, int sy, int w, int h, int dx, int dy) {
     if (source == NULL) return;
-
+/* SPRD: removed for transform BGRA to RGB565 @{ */
+/*
     if (gr_draw->pixel_bytes != source->pixel_bytes) {
-        printf("gr_blit: source has wrong format\n");
+        printf("gr_blit: source has wrong format \n");
         return;
     }
-
+*/
+/* @} */
     dx += overscan_offset_x;
     dy += overscan_offset_y;
 
@@ -247,7 +331,26 @@ void gr_blit(GRSurface* source, int sx, int sy, int w, int h, int dx, int dy) {
 
     int i;
     for (i = 0; i < h; ++i) {
+/* SPRD: added for transform BGRA to RGB565 @{ */
+#if defined(LCD_FORMAT_RGB565)
+        int j=0;
+        unsigned char* pdata = src_p;
+        unsigned char* pdst = dst_p;
+        unsigned short color=0;
+        for(j=0;j<w;j++){
+            unsigned char a,r,g,b;
+            r = *pdata++;
+            g = *pdata++;
+            b = *pdata++;
+            a = *pdata++;
+            color = RGBA32toRGB565(r,g,b);
+            *pdst++ = (unsigned char)((color>>0) & 0x00ff);
+            *pdst++ = (unsigned char)((color>>8) & 0x00ff);
+        }
+#else
         memcpy(dst_p, src_p, w * source->pixel_bytes);
+#endif
+/* @} */
         src_p += source->row_bytes;
         dst_p += gr_draw->row_bytes;
     }
@@ -352,6 +455,14 @@ static void gr_test() {
 }
 #endif
 
+void gr_sync() {
+    if (gr_backend == NULL)
+        return;
+
+    if (gr_backend->sync)
+        gr_backend->sync(gr_draw);
+}
+
 void gr_flip() {
     gr_draw = gr_backend->flip(gr_backend);
 }
@@ -369,8 +480,8 @@ int gr_init(void)
     }
 
     if (!gr_draw) {
-        gr_backend = open_drm();
-        gr_draw = gr_backend->init(gr_backend);
+        //gr_backend = open_drm();
+        //gr_draw = gr_backend->init(gr_backend);
     }
 
     if (!gr_draw) {
@@ -386,6 +497,7 @@ int gr_init(void)
 
     gr_flip();
     gr_flip();
+	gr_flip();
 
     return 0;
 }

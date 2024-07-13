@@ -71,6 +71,8 @@ static int adf_surface_init(adf_pdata *pdata, drm_mode_modeinfo *mode, adf_surfa
         return -errno;
     }
 
+    memset(surf->base.data, 0, surf->pitch * surf->base.height);
+
     return 0;
 }
 
@@ -148,7 +150,7 @@ static GRSurface* adf_init(minui_backend *backend)
 #elif defined(RECOVERY_RGBX)
     pdata->format = DRM_FORMAT_RGBX8888;
 #else
-    pdata->format = DRM_FORMAT_RGB565;
+    pdata->format = DRM_FORMAT_RGBX8888;
 #endif
 
     n_dev_ids = adf_devices(&dev_ids);

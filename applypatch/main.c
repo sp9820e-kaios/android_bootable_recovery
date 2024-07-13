@@ -23,6 +23,13 @@
 #include "edify/expr.h"
 #include "mincrypt/sha.h"
 
+/* SPRD: add for secure boot @{ */
+extern int isApplypatch;
+extern char last_fstype[32];
+extern char last_dev[128];
+extern char last_sec[32];
+/* @} */
+
 int CheckMode(int argc, char** argv) {
     if (argc < 3) {
         return 2;
@@ -204,6 +211,17 @@ int main(int argc, char** argv) {
     } else if (strncmp(argv[1], "-s", 3) == 0) {
         result = SpaceMode(argc, argv);
     } else {
+        /* SPRD: add for secure boot @{ */
+        if (strncmp(argv[1], "-r", 3) == 0) {
+            isApplypatch = 1;
+            strcpy(last_fstype, argv[2]);
+            strcpy(last_dev, argv[3]);
+            strcpy(last_sec, argv[4]);
+            printf("last_fstype = %s, last_dev = %s, last_sec = %s\n", last_fstype, last_dev, last_sec);
+            argc -=4;
+            argv += 4;
+        }
+        /* @} */
         result = PatchMode(argc, argv);
     }
 

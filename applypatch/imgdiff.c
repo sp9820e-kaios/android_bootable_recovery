@@ -623,7 +623,10 @@ unsigned char* MakePatch(ImageChunk* src, ImageChunk* tgt, size_t* size) {
   }
 
   char ptemp[] = "/tmp/imgdiff-patch-XXXXXX";
-  mkstemp(ptemp);
+
+  /* SPRD: add for close temporary file descriptor @{*/
+  int tempFd = mkstemp(ptemp);
+  /* @} */
 
   int r = bsdiff(src->data, src->len, &(src->I), tgt->data, tgt->len, ptemp);
   if (r != 0) {
@@ -642,6 +645,10 @@ unsigned char* MakePatch(ImageChunk* src, ImageChunk* tgt, size_t* size) {
 
   if (tgt->type == CHUNK_NORMAL && tgt->len <= st.st_size) {
     unlink(ptemp);
+
+    /* SPRD: add for close temporary file descriptor @{*/
+    close(tempFd);
+    /* @} */
 
     tgt->type = CHUNK_RAW;
     *size = tgt->len;
@@ -662,6 +669,10 @@ unsigned char* MakePatch(ImageChunk* src, ImageChunk* tgt, size_t* size) {
   fclose(f);
 
   unlink(ptemp);
+
+  /* SPRD: add for close temporary file descriptor @{*/
+  close(tempFd);
+  /* @} */
 
   tgt->source_start = src->start;
   switch (tgt->type) {

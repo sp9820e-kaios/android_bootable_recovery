@@ -51,6 +51,7 @@ static double now() {
 ScreenRecoveryUI::ScreenRecoveryUI() :
     currentIcon(NONE),
     installingFrame(0),
+    erasingFrame(0),
     locale(nullptr),
     rtl_locale(false),
     progressBarType(EMPTY),
@@ -68,6 +69,7 @@ ScreenRecoveryUI::ScreenRecoveryUI() :
     show_text_ever(false),
     menu_(nullptr),
     show_menu(false),
+    menu_first_items(0),
     menu_items(0),
     menu_sel(0),
     file_viewer_text_(nullptr),
@@ -91,24 +93,26 @@ void ScreenRecoveryUI::draw_background_locked(Icon icon) {
 
     if (icon) {
         GRSurface* surface = backgroundIcon[icon];
-        if (icon == INSTALLING_UPDATE || icon == ERASING) {
+        if (icon == INSTALLING_UPDATE) {
             surface = installation[installingFrame];
-        }
-        GRSurface* text_surface = backgroundText[icon];
+        }else if(icon == ERASING){
+			surface = erasure[erasingFrame];
+		}
+        //GRSurface* text_surface = backgroundText[icon];
 
         int iconWidth = gr_get_width(surface);
         int iconHeight = gr_get_height(surface);
-        int textWidth = gr_get_width(text_surface);
-        int textHeight = gr_get_height(text_surface);
+        //int textWidth = gr_get_width(text_surface);
+        //int textHeight = gr_get_height(text_surface);
         int stageHeight = gr_get_height(stageMarkerEmpty);
 
         int sh = (max_stage >= 0) ? stageHeight : 0;
 
         iconX = (gr_fb_width() - iconWidth) / 2;
-        iconY = (gr_fb_height() - (iconHeight+textHeight+40+sh)) / 2;
+        iconY = (gr_fb_height() - (iconHeight+40+sh)) / 2;
 
-        int textX = (gr_fb_width() - textWidth) / 2;
-        int textY = ((gr_fb_height() - (iconHeight+textHeight+40+sh)) / 2) + iconHeight + 40;
+        //int textX = (gr_fb_width() - textWidth) / 2;
+        //int textY = ((gr_fb_height() - (iconHeight+textHeight+40+sh)) / 2) + iconHeight + 40;
 
         gr_blit(surface, 0, 0, iconWidth, iconHeight, iconX, iconY);
         if (stageHeight > 0) {
@@ -122,9 +126,10 @@ void ScreenRecoveryUI::draw_background_locked(Icon icon) {
             }
         }
 
-        gr_color(255, 255, 255, 255);
-        gr_texticon(textX, textY, text_surface);
+        //gr_color(255, 255, 255, 255);
+        //gr_texticon(textX, textY, text_surface);
     }
+	usleep(100000);
 }
 
 // Draw the progress bar (if any) on the screen.  Does not flip pages.
@@ -132,10 +137,13 @@ void ScreenRecoveryUI::draw_background_locked(Icon icon) {
 void ScreenRecoveryUI::draw_progress_locked() {
     if (currentIcon == ERROR) return;
 
-    if (currentIcon == INSTALLING_UPDATE || currentIcon == ERASING) {
+    if (currentIcon == INSTALLING_UPDATE) {
         GRSurface* icon = installation[installingFrame];
         gr_blit(icon, 0, 0, gr_get_width(icon), gr_get_height(icon), iconX, iconY);
-    }
+    }else if(currentIcon == ERASING){
+		GRSurface* icon = erasure[erasingFrame];
+		gr_blit(icon, 0, 0, gr_get_width(icon), gr_get_height(icon), iconX, iconY);
+	}
 
     if (progressBarType != EMPTY) {
         int iconHeight = gr_get_height(backgroundIcon[INSTALLING_UPDATE]);
@@ -249,7 +257,7 @@ void ScreenRecoveryUI::draw_screen_locked() {
             property_get("ro.bootimage.build.fingerprint", recovery_fingerprint, "");
 
             SetColor(INFO);
-            DrawTextLine(&y, "Android Recovery", true);
+             DrawTextLine(&y, "KaiOS Recovery", true);
             for (auto& chunk : android::base::Split(recovery_fingerprint, ":")) {
                 DrawTextLine(&y, chunk.c_str(), false);
             }
@@ -258,20 +266,32 @@ void ScreenRecoveryUI::draw_screen_locked() {
             SetColor(HEADER);
             DrawTextLines(&y, menu_headers_);
 
+            /* SPRD:for menu_item display @{ */
+            int display_max_items = (gr_fb_height() - y) /(char_height+4) ;
+            if (menu_sel - menu_first_items >= display_max_items)
+                menu_first_items = menu_sel - (display_max_items - 1);
+            if (menu_sel < menu_first_items)
+                menu_first_items = menu_sel;
+
+            /* @} */
+            //Print("menu_sel = %d,menu_first_items = %d\n", menu_sel,menu_first_items);
+            //Print("max_items = %d\n,display_max_items = %d\n",menu_items,display_max_items);
+
             SetColor(MENU);
             DrawHorizontalRule(&y);
+
             y += 4;
-            for (int i = 0; i < menu_items; ++i) {
+            for (int i = menu_first_items; i < menu_items; ++i) {
                 if (i == menu_sel) {
                     // Draw the highlight bar.
                     SetColor(IsLongPress() ? MENU_SEL_BG_ACTIVE : MENU_SEL_BG);
                     gr_fill(0, y - 2, gr_fb_width(), y + char_height + 2);
                     // Bold white text for the selected item.
                     SetColor(MENU_SEL_FG);
-                    gr_text(4, y, menu_[i], true);
+                    if(menu_[i][0]) gr_text(4, y, menu_[i], true);
                     SetColor(MENU);
                 } else {
-                    gr_text(4, y, menu_[i], false);
+                    if(menu_[i][0]) gr_text(4, y, menu_[i], false);
                 }
                 y += char_height + 4;
             }
@@ -291,6 +311,7 @@ void ScreenRecoveryUI::draw_screen_locked() {
             --row;
             if (row < 0) row = text_rows_ - 1;
         }
+	usleep(100000);
     }
 }
 
@@ -308,6 +329,7 @@ void ScreenRecoveryUI::update_progress_locked() {
         draw_screen_locked();    // Must redraw the whole screen
         pagesIdentical = true;
     } else {
+    draw_background_locked(currentIcon);
         draw_progress_locked();  // Draw only the progress bar and overlays
     }
     gr_flip();
@@ -329,11 +351,15 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
 
         // update the installation animation, if active
         // skip this if we have a text overlay (too expensive to update)
-        if ((currentIcon == INSTALLING_UPDATE || currentIcon == ERASING) &&
-            installing_frames > 0 && !show_text) {
-            installingFrame = (installingFrame + 1) % installing_frames;
-            redraw = 1;
-        }
+		if((installing_frames > 0)&&(erasing_frames > 0)&& !show_text){
+			if (currentIcon == INSTALLING_UPDATE) {
+				installingFrame = (installingFrame + 1) % installing_frames;
+				redraw = 1;
+			}else if(currentIcon == ERASING){
+				erasingFrame = (erasingFrame + 1) % erasing_frames;
+				redraw = 1;
+			}
+		}
 
         // move the progress bar forward on timed intervals, if configured
         int duration = progressScopeDuration;
@@ -405,8 +431,13 @@ void ScreenRecoveryUI::Init() {
     backgroundIcon[NONE] = nullptr;
     LoadBitmapArray("icon_installing", &installing_frames, &installation);
     backgroundIcon[INSTALLING_UPDATE] = installing_frames ? installation[0] : nullptr;
-    backgroundIcon[ERASING] = backgroundIcon[INSTALLING_UPDATE];
+	LoadBitmapArray("icon_erasing", &erasing_frames, &erasure);
+	backgroundIcon[ERASING] = erasing_frames ? erasure[0] : nullptr;
     LoadBitmap("icon_error", &backgroundIcon[ERROR]);
+	LoadBitmap("icon_install_sucess", &backgroundIcon[INSTALL_SUCESS]);
+	LoadBitmap("icon_install_failed", &backgroundIcon[INSTALL_FAILED]);
+	LoadBitmap("icon_erase_sucess", &backgroundIcon[ERASING_SUCESS]);
+	LoadBitmap("icon_erase_failed", &backgroundIcon[ERASING_FAILED]);
     backgroundIcon[NO_COMMAND] = backgroundIcon[ERROR];
 
     LoadBitmap("progress_empty", &progressBarEmpty);
@@ -641,6 +672,7 @@ void ScreenRecoveryUI::StartMenu(const char* const * headers, const char* const 
             menu_[i][text_cols_ - 1] = '\0';
         }
         menu_items = i;
+        menu_first_items = 0;
         show_menu = true;
         menu_sel = initial_selection;
         update_screen_locked();

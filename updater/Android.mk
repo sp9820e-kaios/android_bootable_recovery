@@ -29,6 +29,44 @@ LOCAL_STATIC_LIBRARIES += \
     libz
 endif
 
+# SPRD: add for remove selinux opration
+ifeq ($(NOT_HAVE_SELINUX), true)
+$(warning not have selinux)
+LOCAL_CFLAGS += -DNOT_HAVE_SELINUX
+endif # NOT_HAVE_SELINUX
+
+# SPRD: add for support format vfat @{
+LOCAL_STATIC_LIBRARIES += \
+    libvfat_format
+# @}
+
+# SPRD: add for ubi support
+LOCAL_STATIC_LIBRARIES += \
+    libubiutils
+
+# SPRD: add fota support
+ifeq ($(strip $(FOTA_UPDATE_SUPPORT)), true)
+LOCAL_CFLAGS += -DFOTA_UPDATE_SUPPORT
+LOCAL_STATIC_LIBRARIES += libfotaupdate
+endif
+
+# SPRD: add for spl update
+LOCAL_STATIC_LIBRARIES += \
+    libsplmerge
+
+# SPRD: add for secure boot @{
+LOCAL_CFLAGS += $(RECOVERY_COMMON_CGLAGS)
+LOCAL_STATIC_LIBRARIES += \
+    libfs_mgr \
+
+ifeq ($(TARGET_USERIMAGES_USE_EXT4), true)
+    LOCAL_CFLAGS += -DUSE_EXT4
+    LOCAL_C_INCLUDES += system/extras/ext4_utils
+    LOCAL_STATIC_LIBRARIES += libext4_utils_static libz
+endif
+
+#@}
+
 LOCAL_STATIC_LIBRARIES += $(TARGET_RECOVERY_UPDATER_LIBS) $(TARGET_RECOVERY_UPDATER_EXTRA_LIBS)
 LOCAL_STATIC_LIBRARIES += libapplypatch libedify libmtdutils libminzip libz
 LOCAL_STATIC_LIBRARIES += libmincrypt libbz

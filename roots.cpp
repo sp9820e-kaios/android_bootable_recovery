@@ -29,16 +29,50 @@
 #include "mtdutils/mounts.h"
 #include "roots.h"
 #include "common.h"
-#include "make_ext4fs.h"
+#include "ext4_utils/make_ext4fs.h"
 extern "C" {
-#include "wipe.h"
+#include "ext4_utils/wipe.h"
 #include "cryptfs.h"
 }
 
+// SPRD: include file
+#include "ext4_utils/ext4_utils.h"
+// SPRD: add for ubi support
+#include "ubiutils/ubiutils.h"
+// SPRD: add for format vfat
+#include "vfat/vfat_format.h"
+/*SPRD: Add block device file system check function {@ */
+#include <stdio.h>
+#include <string.h>
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+#include "ext2fs/ext2fs.h"
+#include "blkid/blkid.h"
+#include "blkid/blkidP.h"
+/* @} */
 static struct fstab *fstab = NULL;
 
 extern struct selabel_handle *sehandle;
+/*SPRD: Add block device file system check function {@ */
+int get_block_fs(char *path, char* fs) {
+    blkid_cache cache = NULL;
+    if (blkid_get_cache(&cache, NULL) < 0) {
+        LOGE("get cache fail \n");
+        return -1;
+    }
 
+    blkid_dev dev = blkid_get_dev(cache, path,BLKID_DEV_NORMAL);
+    if(dev && dev->bid_type) {
+        strcpy(fs, dev->bid_type);
+        LOGE("%s fs is %s \n", path, fs);
+        blkid_put_cache(cache);
+        return 0;
+    }
+    blkid_put_cache(cache);
+    return -1;
+}
+/* @} */
 void load_volume_table()
 {
     int i;
@@ -74,6 +108,15 @@ Volume* volume_for_path(const char* path) {
 
 int ensure_path_mounted(const char* path) {
     Volume* v = volume_for_path(path);
+
+    /* SPRD: add fota support { */
+    #ifdef FOTA_UPDATE_SUPPORT
+      if (strncmp(path, "/fotaupdate/", 12) == 0) {
+        return 0;
+      }
+    #endif
+    /* } */
+
     if (v == NULL) {
         LOGE("unknown volume for path [%s]\n", path);
         return -1;
@@ -110,12 +153,56 @@ int ensure_path_mounted(const char* path) {
             return -1;
         }
         return mtd_mount_partition(partition, v->mount_point, v->fs_type, 0);
+/* SPRD: add for ubifs @{ */
+    } else if (strcmp(v->fs_type, "ubifs") == 0) {
+        return ubi_mount(v->blk_device, v->mount_point, v->fs_type, 0);
+/* @} */
     } else if (strcmp(v->fs_type, "ext4") == 0 ||
                strcmp(v->fs_type, "squashfs") == 0 ||
                strcmp(v->fs_type, "vfat") == 0) {
+/* SPRD: add support for some sdcard can not get ready immediately
+@orig
         result = mount(v->blk_device, v->mount_point, v->fs_type,
                        v->flags, v->fs_options);
         if (result == 0) return 0;
+ @{ */
+/***************************************************************************/
+#define SLEEP_SDCARD 1
+#define TRY_MOUNT_TIMES 8
+        int tryCount = 0;
+        char *dev_buf;
+        int path_length = 0;
+        struct stat s;
+        int i = 0;
+        char block_fs_type[16];
+        dev_buf = strdup(v->blk_device);
+        sleep(SLEEP_SDCARD);
+        for(i = 1;i<6;){
+            if(stat(dev_buf, &s)==0)
+                break;
+            else {
+                i++;
+                path_length = strlen(dev_buf);
+                sprintf(dev_buf + path_length -1, "%d\0", i);
+            }
+        }
+        if(i==6){
+            path_length = strlen(dev_buf);
+            dev_buf[path_length -2] = '\0';
+        }
+        if(get_block_fs(dev_buf, block_fs_type)) {
+            strcpy(block_fs_type, v->fs_type);
+        }
+        while(tryCount++ < TRY_MOUNT_TIMES){
+            if( mount(dev_buf, v->mount_point, block_fs_type, v->flags, v->fs_options))
+                sleep(SLEEP_SDCARD);
+            else
+                return 0;
+        }
+#undef SLEEP_SDCARD
+#undef TRY_MOUNT_TIMES
+/* @} */
+
 
         LOGE("failed to mount %s (%s)\n", v->mount_point, strerror(errno));
         return -1;
@@ -127,6 +214,16 @@ int ensure_path_mounted(const char* path) {
 
 int ensure_path_unmounted(const char* path) {
     Volume* v = volume_for_path(path);
+
+    /* SPRD: add fota support { */
+    #ifdef FOTA_UPDATE_SUPPORT
+      if (strncmp(path, "/fotaupdate/", 12) == 0) {
+        return 0;
+      }
+    #endif
+    /* } */
+
+
     if (v == NULL) {
         LOGE("unknown volume for path [%s]\n", path);
         return -1;
@@ -233,6 +330,11 @@ int format_volume(const char* volume) {
         }
         int result;
         if (strcmp(v->fs_type, "ext4") == 0) {
+	    #ifdef BOARD_USERDATAIMAGE_PARTITION_SIZE
+	    if(strcmp(volume, "/data") == 0){
+		length = BOARD_USERDATAIMAGE_PARTITION_SIZE;
+	    }
+	    #endif
             result = make_ext4fs(v->blk_device, length, volume, sehandle);
         } else {   /* Has to be f2fs because we checked earlier. */
             if (v->key_loc != NULL && strcmp(v->key_loc, "footer") == 0 && length < 0) {
@@ -261,6 +363,28 @@ int format_volume(const char* volume) {
         return 0;
     }
 
+    /* SPRD: add for ubifs @{ */
+    if (strcmp(v->fs_type, "ubifs") == 0) {
+        int result = ubi_update(v->blk_device, 0, volume);
+        if (result != 0) {
+            LOGE("format_volume: make_ubifs failed on %s\n", v->blk_device);
+            return -1;
+        }
+        return 0;
+    }
+    /* @} */
+
+    /* SPRD: add for format vfat @{ */
+    if (strcmp(v->fs_type, "vfat") == 0) {
+        int result = format_vfat(v->blk_device, 0, 0);
+        if (result != 0) {
+            LOGE("format_volume: format_vfat failed on %s\n", v->blk_device);
+            return -1;
+        }
+        return 0;
+    }
+    /* @} */
+
     LOGE("format_volume: fs_type \"%s\" unsupported\n", v->fs_type);
     return -1;
 }
@@ -279,13 +403,19 @@ int setup_install_mounts() {
                 LOGE("failed to mount %s\n", v->mount_point);
                 return -1;
             }
-
-        } else {
-            if (ensure_path_unmounted(v->mount_point) != 0) {
+        }
+    /* SPRD: fix cache to small, use sdcard @{ */
+        else if (strcmp(v->mount_point, "/storage/sdcard0") == 0 ||
+                strcmp(v->mount_point, "/storage/sdcard1") == 0) {
+                ensure_path_mounted(v->mount_point);
+        }
+    /*@}*/
+       else{
+          if (ensure_path_unmounted(v->mount_point) != 0) {
                 LOGE("failed to unmount %s\n", v->mount_point);
                 return -1;
-            }
-        }
+          }
+       }
     }
     return 0;
 }

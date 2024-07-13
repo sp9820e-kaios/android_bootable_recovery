@@ -19,17 +19,26 @@
 #include "common.h"
 #include "mtdutils/mtdutils.h"
 #include "roots.h"
+// SPRD: modify for support ubi
+#include "ubiutils/ubiutils.h"
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 static int get_bootloader_message_mtd(struct bootloader_message *out, const Volume* v);
 static int set_bootloader_message_mtd(const struct bootloader_message *in, const Volume* v);
 static int get_bootloader_message_block(struct bootloader_message *out, const Volume* v);
 static int set_bootloader_message_block(const struct bootloader_message *in, const Volume* v);
+/* SPRD: modify for support ubi @{ */
+static int get_bootloader_message_ubi(struct bootloader_message *out, const Volume* v);
+static int set_bootloader_message_ubi(const struct bootloader_message *in, const Volume* v);
+/* @} */
 
 int get_bootloader_message(struct bootloader_message *out) {
     Volume* v = volume_for_path("/misc");
@@ -39,6 +48,10 @@ int get_bootloader_message(struct bootloader_message *out) {
     }
     if (strcmp(v->fs_type, "mtd") == 0) {
         return get_bootloader_message_mtd(out, v);
+/* SPRD: modify for support ubi @{ */
+    } else if (strcmp(v->fs_type, "ubi") == 0) {
+        return get_bootloader_message_ubi(out, v);
+/* @} */
     } else if (strcmp(v->fs_type, "emmc") == 0) {
         return get_bootloader_message_block(out, v);
     }
@@ -54,6 +67,10 @@ int set_bootloader_message(const struct bootloader_message *in) {
     }
     if (strcmp(v->fs_type, "mtd") == 0) {
         return set_bootloader_message_mtd(in, v);
+        /* SPRD: modify for support ubi @{ */
+    } else if (strcmp(v->fs_type, "ubi") == 0) {
+        return set_bootloader_message_ubi(in, v);
+        /* @} */
     } else if (strcmp(v->fs_type, "emmc") == 0) {
         return set_bootloader_message_block(in, v);
     }
@@ -201,3 +218,68 @@ static int set_bootloader_message_block(const struct bootloader_message *in,
     }
     return 0;
 }
+
+/* SPRD: modify for support ubi @{ */
+// ------------------------------
+// for misc partitions on UBI
+// ------------------------------
+
+static int get_bootloader_message_ubi(struct bootloader_message *out,
+                                        const Volume* v) {
+    char *devname = ubi_get_devname(v->blk_device);
+    wait_for_device(devname);
+    int res = -1;
+    int count = 0;
+    int fd = open(devname, O_RDONLY);
+    if (fd <= -1) {
+        LOGE("get: Can't open %s\n(%s)\n", devname, strerror(errno));
+        goto done;
+    }
+    struct bootloader_message temp;
+    count = read(fd,&temp, sizeof(temp));
+    if (count < 0) {
+        LOGE("get: Failed reading %s\n(%s)\n", devname, strerror(errno));
+        goto done;
+    }
+
+    memcpy(out, &temp, sizeof(temp));
+    res = 0;
+done:
+    if (fd >= 0 && close(fd) != 0) {
+        LOGE("get: Failed closing %s\n(%s)\n", devname, strerror(errno));
+        res = -1;
+    }
+    free(devname);
+    return res;
+}
+
+static int set_bootloader_message_ubi(const struct bootloader_message *in,
+                                        const Volume* v) {
+    char *devname = ubi_get_devname(v->blk_device);
+    wait_for_device(devname);
+    int res = -1;
+    int count = 0;
+    int fd = open(devname, O_RDWR);
+    if (fd <= -1) {
+        LOGE("set: Can't open %s\n(%s)\n", devname, strerror(errno));
+        goto done;
+    }
+
+    ubi_fupdate(fd,sizeof(*in));
+
+    count = write(fd, in, sizeof(*in));
+    if (count < 0) {
+        LOGE("set: Failed writing %s\n(%s)\n", devname, strerror(errno));
+        goto done;
+    }
+    res = 0;
+
+done:
+    if (fd >= 0 && close(fd) != 0) {
+        LOGE("set: Failed closing %s\n(%s)\n", devname, strerror(errno));
+        res = -1;
+    }
+    free(devname);
+    return res;
+}
+/* @} */

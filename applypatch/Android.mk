@@ -15,25 +15,50 @@
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
+#recovery config:update from internal storage
+LOCAL_CFLAGS += $(USE_INTERNAL_STORAGE)
+
 LOCAL_SRC_FILES := applypatch.c bspatch.c freecache.c imgpatch.c utils.c
 LOCAL_MODULE := libapplypatch
 LOCAL_MODULE_TAGS := eng
 LOCAL_C_INCLUDES += external/bzip2 external/zlib bootable/recovery
 LOCAL_STATIC_LIBRARIES += libmtdutils libmincrypt libbz libz
+# SPRD: add for ubi support
+LOCAL_STATIC_LIBRARIES += \
+    libubiutils
+
+# SPRD: add for secure boot
+LOCAL_CFLAGS += $(RECOVERY_COMMON_CGLAGS)
+LOCAL_STATIC_LIBRARIES += \
+    libfs_mgr\
 
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
+
+#recovery config:update from internal storage
+LOCAL_CFLAGS += $(USE_INTERNAL_STORAGE)
 
 LOCAL_SRC_FILES := main.c
 LOCAL_MODULE := applypatch
 LOCAL_C_INCLUDES += bootable/recovery
 LOCAL_STATIC_LIBRARIES += libapplypatch libmtdutils libmincrypt libbz
 LOCAL_SHARED_LIBRARIES += libz libcutils libstdc++ libc
+# SPRD: add for ubi support
+LOCAL_STATIC_LIBRARIES += \
+    libubiutils
+
+# SPRD: add for secure boot
+LOCAL_CFLAGS += $(RECOVERY_COMMON_CGLAGS)
+LOCAL_STATIC_LIBRARIES += \
+    libfs_mgr\
 
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
+
+#recovery config:update from internal storage
+LOCAL_CFLAGS += $(USE_INTERNAL_STORAGE)
 
 LOCAL_SRC_FILES := main.c
 LOCAL_MODULE := applypatch_static
@@ -42,6 +67,16 @@ LOCAL_MODULE_TAGS := eng
 LOCAL_C_INCLUDES += bootable/recovery
 LOCAL_STATIC_LIBRARIES += libapplypatch libmtdutils libmincrypt libbz
 LOCAL_STATIC_LIBRARIES += libz libcutils libstdc++ libc
+# SPRD: add for ubi support
+LOCAL_STATIC_LIBRARIES += \
+    libubiutils
+
+# SPRD: add for secure boot
+LOCAL_CFLAGS += $(RECOVERY_COMMON_CGLAGS)
+LOCAL_STATIC_LIBRARIES += \
+    libfs_mgr \
+    libcutils \
+    liblog\
 
 include $(BUILD_EXECUTABLE)
 

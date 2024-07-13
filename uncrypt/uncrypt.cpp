@@ -130,6 +130,25 @@ static struct fstab* read_fstab() {
     return fstab;
 }
 
+/*SPRD: add for dismiss uncrypt sdcard @{ */
+static int index_of_substr(const char *str1, const char *str2)
+{
+    char *p;
+    int i=0;
+    p = strstr(str1,str2);
+    if(p==NULL)
+        return -1;
+    else{
+        while(str1!=p)
+        {
+            str1++;
+            i++;
+        }
+    }
+    return i;
+}
+/* @ } */
+
 static const char* find_block_device(const char* path, bool* encryptable, bool* encrypted) {
     // Look for a volume whose mount point is the prefix of path and
     // return its block device.  Set encrypted if it's currently
@@ -368,6 +387,14 @@ int uncrypt(const char* input_path, const char* map_file, int status_fd) {
 
     // Turn the name of the file we're supposed to convert into an
     // absolute path, so we can find what filesystem it's on.
+
+    /*SPRD: add for dismiss uncrypt sdcard @{ */
+    if (0 == index_of_substr(input_path, "/storage/") ) {
+        ALOGE("no need to uncrypt package in sdcard_path");
+        return 0;
+    }
+    /* @} */
+
     char path[PATH_MAX+1];
     if (realpath(input_path, path) == NULL) {
         ALOGE("failed to convert \"%s\" to absolute path: %s", input_path, strerror(errno));

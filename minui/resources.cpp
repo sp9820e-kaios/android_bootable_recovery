@@ -99,6 +99,7 @@ static int open_png(const char* name, png_structp* png_ptr, png_infop* info_ptr,
 
     *channels = png_get_channels(*png_ptr, *info_ptr);
 
+    printf("bit_depth:%d,*channels:%d,color_type:%d\n",bit_depth,*channels,color_type);
     if (bit_depth == 8 && *channels == 3 && color_type == PNG_COLOR_TYPE_RGB) {
         // 8-bit RGB images: great, nothing to do.
     } else if (bit_depth <= 8 && *channels == 1 && color_type == PNG_COLOR_TYPE_GRAY) {
@@ -377,7 +378,7 @@ static int matches_locale(const char* loc, const char* locale) {
     for (i = 0; loc[i] != 0 && loc[i] != '_'; ++i);
     if (loc[i] == '_') return 0;
 
-    return (strncmp(locale, loc, i) == 0 && locale[i] == '_');
+    return (strncmp(locale, loc, i) == 0 && (locale[i] == '_' || locale[i] == '-'));
 }
 
 int res_create_localized_alpha_surface(const char* name,

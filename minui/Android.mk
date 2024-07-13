@@ -5,12 +5,10 @@ LOCAL_SRC_FILES := \
     events.cpp \
     graphics.cpp \
     graphics_adf.cpp \
-    graphics_drm.cpp \
     graphics_fbdev.cpp \
     resources.cpp \
 
 LOCAL_WHOLE_STATIC_LIBRARIES += libadf
-LOCAL_WHOLE_STATIC_LIBRARIES += libdrm
 LOCAL_STATIC_LIBRARIES += libpng
 
 LOCAL_MODULE := libminui
@@ -21,6 +19,11 @@ LOCAL_CLANG := true
 # ordinary characters in this context).  Strip double-quotes from the
 # value so that either will work.
 
+# SPRD: add for transform BGRA to  RBG565 @{
+ifeq ($(strip $(TARGET_BOARD_LCD_FORMAT_RGB565)) , true)
+LOCAL_CFLAGS += -DLCD_FORMAT_RGB565
+endif
+# @}
 ifeq ($(subst ",,$(TARGET_RECOVERY_PIXEL_FORMAT)),ABGR_8888)
   LOCAL_CFLAGS += -DRECOVERY_ABGR
 endif
@@ -42,6 +45,6 @@ include $(BUILD_STATIC_LIBRARY)
 # Used by OEMs for factory test images.
 include $(CLEAR_VARS)
 LOCAL_MODULE := libminui
-LOCAL_WHOLE_STATIC_LIBRARIES += libminui
+LOCAL_WHOLE_STATIC_LIBRARIES += libminui libcutils
 LOCAL_SHARED_LIBRARIES := libpng
 include $(BUILD_SHARED_LIBRARY)

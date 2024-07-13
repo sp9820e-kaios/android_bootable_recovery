@@ -14,8 +14,16 @@
 
 LOCAL_PATH := $(call my-dir)
 
+#recovery config:update from internal storage
+ifeq ($(ENABLE_INTERNAL_STORAGE),true)
+$(warning warning enable internal storage)
+USE_INTERNAL_STORAGE := -DENABLE_INTERNAL_STORAGE
+endif
 
 include $(CLEAR_VARS)
+
+#recovery config:update from internal storage
+LOCAL_CFLAGS += $(USE_INTERNAL_STORAGE)
 
 LOCAL_SRC_FILES := fuse_sideload.c
 
@@ -29,6 +37,54 @@ include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 
+# SPRD: Add block device file system check function {@
+blkfs_c_includes := \
+    external/e2fsprogs/lib
+
+blkfs_cflags := -O2 -g -W -Wall \
+    -DHAVE_UNISTD_H \
+    -DHAVE_ERRNO_H \
+    -DHAVE_NETINET_IN_H \
+    -DHAVE_SYS_IOCTL_H \
+    -DHAVE_SYS_MMAN_H \
+    -DHAVE_SYS_MOUNT_H \
+    -DHAVE_SYS_PRCTL_H \
+    -DHAVE_SYS_RESOURCE_H \
+    -DHAVE_SYS_SELECT_H \
+    -DHAVE_SYS_STAT_H \
+    -DHAVE_SYS_TYPES_H \
+    -DHAVE_STDLIB_H \
+    -DHAVE_STRCASECMP \
+    -DHAVE_STRDUP \
+    -DHAVE_MMAP \
+    -DHAVE_UTIME_H \
+    -DHAVE_GETPAGESIZE \
+    -DHAVE_LSEEK64 \
+    -DHAVE_LSEEK64_PROTOTYPE \
+    -DHAVE_EXT2_IOCTLS \
+    -DHAVE_LINUX_FD_H \
+    -DHAVE_TYPE_SSIZE_T \
+    -DHAVE_GETOPT_H \
+    -DHAVE_SYS_TIME_H \
+    -DHAVE_SYS_PARAM_H \
+    -DHAVE_SYSCONF \
+    -DHAVE_TERMIO_H \
+    -DHAVE_RECOVERY_BLKFS
+# @}
+#recovery config:update from internal storage
+LOCAL_CFLAGS += $(USE_INTERNAL_STORAGE)
+
+#recovery config:update from internal storage
+ifeq ($(ENABLE_INTERNAL_STORAGE),true)
+LOCAL_CFLAGS += -DENABLE_INTERNAL_STORAGE
+endif
+
+# Kaios usbmsc parition support
+ifdef BOARD_USBMSCIMAGE_PARTITION_SIZE
+LOCAL_CFLAGS += -DHAVE_USBMSC_PARTITION
+endif
+
+#SPRD:add show_info function
 LOCAL_SRC_FILES := \
     adb_install.cpp \
     asn1_decoder.cpp \
@@ -41,6 +97,7 @@ LOCAL_SRC_FILES := \
     screen_ui.cpp \
     ui.cpp \
     verifier.cpp \
+    show_info.c
 
 LOCAL_MODULE := recovery
 
@@ -59,9 +116,11 @@ LOCAL_C_INCLUDES += \
     system/vold \
     system/extras/ext4_utils \
     system/core/adb \
+    $(TARGET_OTA_EXTENSIONS_DIR) \
+    $(blkfs_c_includes)
 
 LOCAL_STATIC_LIBRARIES := \
-    libext4_utils_static \
+    libext4_utils_static_ota \
     libsparse_static \
     libminzip \
     libz \
@@ -79,11 +138,40 @@ LOCAL_STATIC_LIBRARIES := \
     libstdc++ \
     libm \
     libc
+# SPRD: add block device file system check function {@
+LOCAL_STATIC_LIBRARIES += \
+    libext2_blkid \
+    libext2_uuid_static \
+    libext2fs \
+    libext2_com_err \
+    libext2_e2p
+
+LOCAL_CFLAGS += $(blkfs_cflags)
+# @}
+# SPRD: add for support format vfat @{
+LOCAL_STATIC_LIBRARIES += \
+    libvfat_format
+# @}
+
+# SPRD: add for ubi support
+LOCAL_STATIC_LIBRARIES += \
+    libubiutils
+
+# SPRD: add fota support
+ifeq ($(strip $(FOTA_UPDATE_SUPPORT)), true)
+LOCAL_CFLAGS += -DFOTA_UPDATE_SUPPORT
+LOCAL_STATIC_LIBRARIES += libfotaupdate
+endif
+
 
 ifeq ($(TARGET_USERIMAGES_USE_EXT4), true)
     LOCAL_CFLAGS += -DUSE_EXT4
     LOCAL_C_INCLUDES += system/extras/ext4_utils
-    LOCAL_STATIC_LIBRARIES += libext4_utils_static libz
+    LOCAL_STATIC_LIBRARIES += libext4_utils_static_ota libz
+endif
+
+ifneq ($(BOARD_USERDATAIMAGE_PARTITION_SIZE),NULL)
+    LOCAL_CFLAGS += -DBOARD_USERDATAIMAGE_PARTITION_SIZE=$(BOARD_USERDATAIMAGE_PARTITION_SIZE)
 endif
 
 LOCAL_MODULE_PATH := $(TARGET_RECOVERY_ROOT_OUT)/sbin
@@ -123,7 +211,17 @@ LOCAL_STATIC_LIBRARIES := \
     libc
 include $(BUILD_EXECUTABLE)
 
+# SPRD: add fota support
+ifeq ($(strip $(FOTA_UPDATE_SUPPORT)), true)
+include $(CLEAR_VARS)
+LOCAL_PREBUILT_LIBS += libfotaupdate.a
+include $(BUILD_MULTI_PREBUILT)
+endif
 
+# SPRD: modify for ubi support
+# SPRD: modify for secure boot
+# SPRD: modify for repartition
+# SPRD: modify for backup and resume data
 include $(LOCAL_PATH)/minui/Android.mk \
     $(LOCAL_PATH)/minzip/Android.mk \
     $(LOCAL_PATH)/minadbd/Android.mk \
@@ -133,4 +231,11 @@ include $(LOCAL_PATH)/minui/Android.mk \
     $(LOCAL_PATH)/edify/Android.mk \
     $(LOCAL_PATH)/uncrypt/Android.mk \
     $(LOCAL_PATH)/updater/Android.mk \
-    $(LOCAL_PATH)/applypatch/Android.mk
+    $(LOCAL_PATH)/applypatch/Android.mk \
+    $(LOCAL_PATH)/nvmerge/Android.mk \
+    $(LOCAL_PATH)/splmerge/Android.mk \
+    $(LOCAL_PATH)/ubiutils/Android.mk \
+    $(LOCAL_PATH)/repart/Android.mk \
+    $(LOCAL_PATH)/pack/Android.mk \
+    $(LOCAL_PATH)/vfat/Android.mk \
+    $(LOCAL_PATH)/ext4_utils/Android.mk

@@ -763,6 +763,20 @@ static int CreateStash(State* state, int maxblocks, const char* blockdev, char**
         goto csout;
     }
 
+    /* SPRD: add for 4.4\5.1 upgrade to 6.0(when partition adjust)@{*/
+    res = stat(STASH_DIRECTORY_BASE, &st);
+    if (res == -1 && errno != ENOENT) {
+        ErrorAbort(state, "stat \"%s\" failed: %s\n", STASH_DIRECTORY_BASE, strerror(errno));
+        goto csout;
+    } else if (res != 0) {
+        fprintf(stderr, "creating stash %s\n", STASH_DIRECTORY_BASE);
+        res = mkdir(STASH_DIRECTORY_BASE, STASH_DIRECTORY_MODE);
+        if (res != 0) {
+             ErrorAbort(state, "mkdir \"%s\" failed: %s\n", STASH_DIRECTORY_BASE, strerror(errno));
+             goto csout;
+        }
+    }
+    /* @ } */
     res = stat(dirname, &st);
 
     if (res == -1 && errno != ENOENT) {

@@ -313,6 +313,13 @@ RecoveryUI::KeyAction RecoveryUI::CheckKey(int key, bool is_long_press) {
         bool reboot_enabled = enable_reboot;
         pthread_mutex_unlock(&key_queue_mutex);
 
+        /*Bug612695  yuanhang.zhou 2016-11-1 begin*/
+	#if 0	
+        if(!IsTextVisible())
+                return TOGGLE;
+    #endif
+		/*Bug612695  yuanhang.zhou 2016-11-1 end*/
+
         if (reboot_enabled) {
             ++consecutive_power_keys;
             if (consecutive_power_keys >= 7) {

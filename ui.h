@@ -37,7 +37,7 @@ class RecoveryUI {
     virtual void SetLocale(const char* locale) = 0;
 
     // Set the overall recovery state ("background image").
-    enum Icon { NONE, INSTALLING_UPDATE, ERASING, NO_COMMAND, ERROR };
+    enum Icon { NONE, INSTALLING_UPDATE, ERASING, NO_COMMAND, ERROR, INSTALL_FAILED, INSTALL_SUCESS, ERASING_FAILED, ERASING_SUCESS };
     virtual void SetBackground(Icon icon) = 0;
 
     // --- progress indicator ---

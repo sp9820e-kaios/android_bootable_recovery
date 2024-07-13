@@ -68,6 +68,11 @@ class Device {
         SHUTDOWN = 8,
         VIEW_RECOVERY_LOGS = 9,
         MOUNT_SYSTEM = 10,
+    /*SPRD:update from cache partiton,external and internal storage, check system partition @{*/
+        APPLY_CACHE = 11,
+        APPLY_INT = 12,
+        CHECK_ROOT = 13,
+    /*@}*/
     };
 
     // Return the list of menu items (an array of strings,

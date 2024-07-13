@@ -33,13 +33,20 @@
 #include "minui.h"
 #include "graphics.h"
 
+/* SPRD: add for support rotate @{ */
+#include <utils/Log.h>
+//#include <cutils/properties.h>
+#include "cutils/properties.h"
+/* @} */
 static GRSurface* fbdev_init(minui_backend*);
+static void fbdev_sync(GRSurface*);
 static GRSurface* fbdev_flip(minui_backend*);
 static void fbdev_blank(minui_backend*, bool);
 static void fbdev_exit(minui_backend*);
 
-static GRSurface gr_framebuffer[2];
+static GRSurface gr_framebuffer[3];
 static bool double_buffered;
+static bool three_buffered;
 static GRSurface* gr_draw = NULL;
 static int displayed_buffer;
 
@@ -48,10 +55,16 @@ static int fb_fd = -1;
 
 static minui_backend my_backend = {
     .init = fbdev_init,
+    .sync = fbdev_sync,
     .flip = fbdev_flip,
     .blank = fbdev_blank,
     .exit = fbdev_exit,
 };
+
+/* SPRD: add for support rotate @{ */
+static int rotation = FB_ROTATE_UR;
+static GRSurface *gr_temp;
+/* @} */
 
 minui_backend* open_fbdev() {
     return &my_backend;
@@ -65,12 +78,14 @@ static void fbdev_blank(minui_backend* backend __unused, bool blank)
     if (ret < 0)
         perror("ioctl(): blank");
 }
-
 static void set_displayed_framebuffer(unsigned n)
 {
-    if (n > 1 || !double_buffered) return;
-
-    vi.yres_virtual = gr_framebuffer[0].height * 2;
+    if (n > 2 || !(three_buffered || double_buffered)) return;
+    if (n > 1 && !three_buffered ) return;
+ /*SPRD remove temporary,cause it due to the result of cannot enter recovery ui @{*/
+    //SPRD:remove
+    //vi.yres_virtual = gr_framebuffer[0].height * 2;
+ /* @}*/
     vi.yoffset = n * gr_framebuffer[0].height;
     vi.bits_per_pixel = gr_framebuffer[0].pixel_bytes * 8;
     if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &vi) < 0) {
@@ -129,6 +144,24 @@ static GRSurface* fbdev_init(minui_backend* backend) {
 
     memset(bits, 0, fi.smem_len);
 
+    /* SPRD: add for support rotate @{ */
+    char rotate_str[PROPERTY_VALUE_MAX+1];
+    property_get("ro.sf.hwrotation", rotate_str, "0");
+    printf("in %s: ro.sf.hwrotation=%s\n",__func__,rotate_str);
+    if (!strcmp(rotate_str, "90")) {
+        rotation = FB_ROTATE_CW;
+    } else if (!strcmp(rotate_str, "180")) {
+        rotation = FB_ROTATE_UD;
+    } else if (!strcmp(rotate_str, "270")) {
+        rotation = FB_ROTATE_CCW;
+    }
+    /* @} */
+
+    printf("fb0 reports (possibly inaccurate):\n"
+           "  fi.line_length = %3d\n"
+           "  vi.xres   = %3d    vi.yres = %3d\n",
+           fi.line_length,
+           vi.xres, vi.yres);
     gr_framebuffer[0].width = vi.xres;
     gr_framebuffer[0].height = vi.yres;
     gr_framebuffer[0].row_bytes = fi.line_length;
@@ -139,16 +172,45 @@ static GRSurface* fbdev_init(minui_backend* backend) {
     /* check if we can use double buffering */
     if (vi.yres * fi.line_length * 2 <= fi.smem_len) {
         double_buffered = true;
-
+	three_buffered = false;
         memcpy(gr_framebuffer+1, gr_framebuffer, sizeof(GRSurface));
         gr_framebuffer[1].data = gr_framebuffer[0].data +
             gr_framebuffer[0].height * gr_framebuffer[0].row_bytes;
+		
+        if (vi.yres * fi.line_length * 3 <= fi.smem_len) {
+            double_buffered = false;
+            three_buffered = true;
+            memcpy(gr_framebuffer+2, gr_framebuffer, sizeof(GRSurface));
+            gr_framebuffer[2].data = gr_framebuffer[0].data +
+                2 * gr_framebuffer[0].height * gr_framebuffer[0].row_bytes;
+        }
 
+        /* SPRD: add for support rotate @{
+         * @orig
         gr_draw = gr_framebuffer+1;
+         */
+        if (rotation == FB_ROTATE_UR) {
+            gr_draw = gr_framebuffer+( double_buffered ? 1 : 2 );
+        } else {
+            gr_temp = (GRSurface *) malloc(sizeof( GRSurface));
+            if((vi.rotate ^ rotation) & 1) {
+                gr_temp->width = vi.yres;
+                gr_temp->height = vi.xres;
+                gr_temp->row_bytes = vi.yres * vi.bits_per_pixel / 8;
+            } else {
+                gr_temp->width = vi.xres;
+                gr_temp->height = vi.yres;
+                gr_temp->row_bytes = fi.line_length;
+            }
+            gr_temp->pixel_bytes = vi.bits_per_pixel / 8;
+            gr_temp->data = (unsigned char*) malloc(gr_temp->height * gr_temp->row_bytes);
+            gr_draw = gr_temp;
+        }
+        /* @} */
 
     } else {
         double_buffered = false;
-
+	three_buffered = false;
         // Without double-buffering, we allocate RAM for a buffer to
         // draw in, and then "flipping" the buffer consists of a
         // memcpy from the buffer we allocated to the framebuffer.
@@ -174,9 +236,87 @@ static GRSurface* fbdev_init(minui_backend* backend) {
     return gr_draw;
 }
 
+/* SPRD: add for support rotate @{ */
+void gr_rotate(GRSurface *dst_surface, GRSurface *src_surface)
+{
+    unsigned int  i,j;
+    unsigned int width, height;
+    /* copy data from the in-memory surface to the buffer we're about
+     * to make active. */
+    i = vi.xres * vi.yres;
+
+    //printf("entry %s:rotation=%d\n",__func__,rotation);
+    width = src_surface->width;
+    height = src_surface->height;
+
+    if (vi.bits_per_pixel == 16) {
+        unsigned short *out, *in;
+
+        out = (unsigned short *)dst_surface->data;
+        in = (unsigned short *)src_surface->data;
+
+        if (rotation == FB_ROTATE_UD) { //180
+            unsigned int size = width * height;
+            out += size - 1;
+
+            for (i = size; i--; )
+                *out-- = *in++;
+        } else if (rotation == FB_ROTATE_CW) { //90
+            unsigned int h = height - 1;
+            for (i = 0; i < height; i++)
+                for (j = 0; j < width; j++)
+                    out[height * j + h - i] = *in++;
+        } else if (rotation == FB_ROTATE_CCW) { //270
+            int w = width - 1;
+            for (i = 0; i < height; i++)
+                for (j = 0; j < width; j++)
+                    out[height * (w - j) + i] = *in++;
+        } else if (rotation == FB_ROTATE_UR) {
+            memcpy(out, in, width * height * 2);
+        }
+
+    } else {
+        unsigned int *out, *in;
+
+        out = (unsigned int *)dst_surface->data;
+        in = (unsigned int *)src_surface->data;
+
+        if (rotation == FB_ROTATE_UD) { //180
+            unsigned int size = width * height;
+            out += size - 1;
+
+            for (i = size; i--; )
+                *out-- = *in++;
+        } else if (rotation == FB_ROTATE_CW) { //90
+            unsigned int h = height - 1;
+            for (i = 0; i < height; i++)
+                for (j = 0; j < width; j++)
+                    out[height * j + h - i] = *in++;
+        } else if (rotation == FB_ROTATE_CCW) { //270
+            int w = width - 1;
+            for (i = 0; i < height; i++)
+                for (j = 0; j < width; j++)
+                    out[height * (w - j) + i] = *in++;
+        } else if (rotation == FB_ROTATE_UR) {
+            memcpy(out, in, width * height * 4);
+        }
+    }
+}
+/* @} */
+
+static void fbdev_sync(GRSurface* draw __unused)
+{
+        if (ioctl(fb_fd, FBIO_WAITFORVSYNC, &vi) < 0)
+        {
+          printf("sync fb failed\n");
+        }
+}
+
 static GRSurface* fbdev_flip(minui_backend* backend __unused) {
-    if (double_buffered) {
+    if (double_buffered || three_buffered) {
 #if defined(RECOVERY_BGRA)
+/* SPRD: modified for transform BGRA to RGB565 @{ */
+#ifndef LCD_FORMAT_RGB565
         // In case of BGRA, do some byte swapping
         unsigned int idx;
         unsigned char tmp;
@@ -188,11 +328,22 @@ static GRSurface* fbdev_flip(minui_backend* backend __unused) {
             ucfb_vaddr[idx + 2] = tmp;
         }
 #endif
+/* @} */
+#endif
         // Change gr_draw to point to the buffer currently displayed,
         // then flip the driver so we're displaying the other buffer
         // instead.
+        /* SPRD: add for support rotate @{
+         * @orig
         gr_draw = gr_framebuffer + displayed_buffer;
-        set_displayed_framebuffer(1-displayed_buffer);
+         */
+        if (rotation == FB_ROTATE_UR) {
+            gr_draw = gr_framebuffer + (double_buffered ? displayed_buffer : (displayed_buffer + 1) % 3 );
+        } else {
+            gr_rotate(&gr_framebuffer[double_buffered ? (1 - displayed_buffer) : (displayed_buffer + 1) % 3], gr_temp);
+        }
+        /* @} */
+        set_displayed_framebuffer( double_buffered ? (1 - displayed_buffer) : (displayed_buffer + 2) % 3);
     } else {
         // Copy from the in-memory surface to the framebuffer.
         memcpy(gr_framebuffer[0].data, gr_draw->data,
@@ -205,9 +356,15 @@ static void fbdev_exit(minui_backend* backend __unused) {
     close(fb_fd);
     fb_fd = -1;
 
-    if (!double_buffered && gr_draw) {
+    if (!(double_buffered || three_buffered) && gr_draw) {
         free(gr_draw->data);
         free(gr_draw);
     }
+    /* SPRD: add for support rotate @{ */
+   if (rotation != FB_ROTATE_UR && (double_buffered || three_buffered )) {
+        free(gr_temp->data);
+        free(gr_temp);
+    }
+    /* @} */
     gr_draw = NULL;
 }

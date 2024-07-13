@@ -69,13 +69,15 @@ class ScreenRecoveryUI : public RecoveryUI {
   private:
     Icon currentIcon;
     int installingFrame;
+    int erasingFrame;
     const char* locale;
     bool rtl_locale;
 
     pthread_mutex_t updateMutex;
-    GRSurface* backgroundIcon[5];
+    GRSurface* backgroundIcon[9];
     GRSurface* backgroundText[5];
     GRSurface** installation;
+	GRSurface** erasure;
     GRSurface* progressBarEmpty;
     GRSurface* progressBarFill;
     GRSurface* stageMarkerEmpty;
@@ -101,7 +103,7 @@ class ScreenRecoveryUI : public RecoveryUI {
     char** menu_;
     const char* const* menu_headers_;
     bool show_menu;
-    int menu_items, menu_sel;
+    int menu_first_items, menu_items, menu_sel;
 
     // An alternate text screen, swapped with 'text_' when we're viewing a log file.
     char** file_viewer_text_;
@@ -110,6 +112,7 @@ class ScreenRecoveryUI : public RecoveryUI {
 
     int animation_fps;
     int installing_frames;
+	int erasing_frames;
 
     int iconX, iconY;
 

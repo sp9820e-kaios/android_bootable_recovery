@@ -159,3 +159,9 @@ remount_read_only(const MountedVolume* volume)
                  MS_NOATIME | MS_NODEV | MS_NODIRATIME |
                  MS_RDONLY | MS_REMOUNT, 0);
 }
+
+int unmount_data_point(void)
+{
+    return (umount("/data"));
+}
+

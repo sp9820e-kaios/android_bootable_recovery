@@ -38,11 +38,21 @@ typedef struct _FileContents {
 // it to free up space.  If the expected source file doesn't exist, or
 // is corrupted, we look to see if this file contains the bits we want
 // and use it as the source instead.
+/* SPRD: fix cache to small, use sdcard @{
 #define CACHE_TEMP_SOURCE "/cache/saved.file"
+ */
+#define CACHE_TEMP_SOURCE cache_temp_source
+#define ORIG_CACHE_TEMP_SOURCE "/cache/saved.file"
+#define OTHER_CACHE_ROOT       "/storage/sdcard0"
+#define OTHER_CACHE_DIR        OTHER_CACHE_ROOT"/ota_cache"
+#define OTHER_TEMP_SOURCE      OTHER_CACHE_DIR"/saved.file"
+/* @} */
 
 typedef ssize_t (*SinkFn)(const unsigned char*, ssize_t, void*);
 
 // applypatch.c
+// SPRD: fix cache to small, use sdcard
+extern const char *cache_temp_source;
 int ShowLicenses();
 size_t FreeSpaceForFile(const char* filename);
 int CacheSizeCheck(size_t bytes);

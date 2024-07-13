@@ -26,6 +26,13 @@ static const char* MENU_ITEMS[] = {
     "Mount /system",
     "View recovery logs",
     "Power off",
+   /*SPRD:update from cache partiton,external and internal storage @{*/
+    "update from cache",
+#ifdef ENABLE_INTERNAL_STORAGE
+    "update from internal storage",
+#endif
+    "check system partition",
+    /*@}*/
     NULL
 };
 
@@ -44,6 +51,15 @@ Device::BuiltinAction Device::InvokeMenuItem(int menu_position) {
     case 6: return MOUNT_SYSTEM;
     case 7: return VIEW_RECOVERY_LOGS;
     case 8: return SHUTDOWN;
+     /*SPRD:update from cache partiton,external and internal storage,check system partition @{*/
+    case 9: return APPLY_CACHE;
+#ifdef ENABLE_INTERNAL_STORAGE
+    case 10: return APPLY_INT;
+    case 11: return CHECK_ROOT;
+#else
+    case 10: return CHECK_ROOT;
+#endif
+     /*@}*/
     default: return NO_ACTION;
   }
 }

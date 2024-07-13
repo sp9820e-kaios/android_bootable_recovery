@@ -144,7 +144,12 @@ int MakeFreeSpaceOnCache(size_t bytes_needed) {
   if (entries == 0) {
     // nothing we can delete to free up space!
     printf("no files can be deleted to free space on /cache\n");
+    /* SPRD: fix cache to small, use sdcard @{
+     * @orig
     return -1;
+     */
+    goto try_sdcard;
+    /* @} */
   }
 
   // We could try to be smarter about which files to delete:  the
@@ -168,5 +173,25 @@ int MakeFreeSpaceOnCache(size_t bytes_needed) {
   }
   free(names);
 
+  /* SPRD: fix cache to small, use sdcard @{ */
+try_sdcard:
+  if (free_now < bytes_needed) {
+      free_now = FreeSpaceForFile(OTHER_CACHE_ROOT);
+      printf("%lu bytes free on %s (%ld needed)\n",
+             (long)free_now, OTHER_CACHE_ROOT, (long)bytes_needed);
+      if (free_now >= bytes_needed) {
+          char *sdcard_cache_dir = OTHER_CACHE_DIR;
+          int result = mkdir(sdcard_cache_dir, 0755);
+          if (result == 0 || errno == EEXIST) {
+              if (result == 0)
+                  printf("mkdir(%s) ok\n", sdcard_cache_dir);
+              cache_temp_source = OTHER_TEMP_SOURCE;
+          } else {
+              printf("mkdir(%s) error: %s\n", sdcard_cache_dir, strerror(errno));
+              free_now = 0;
+          }
+      }
+  }
+  /* @} */
   return (free_now >= bytes_needed) ? 0 : -1;
 }
